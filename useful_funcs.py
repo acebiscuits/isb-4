@@ -1,11 +1,12 @@
 import hashlib
 import logging
 import json
+from matplotlib import pyplot as plt
+import multiprocessing as mp
+from functools import partial
+from time import time
 
-settings = {"hash": "f56ab81d14e7c55304dff878c3f61f2d96c8ef1f56aff163320e67df",
-"first_digits": ["477932", "427714", "431417", "458450", "475791", "477714", "477964", "479087", "419540", "426101", "428905", "428906", "458411", "458443", "415482"],
-"last_digits": "7819"
-}
+cores = mp.cpu_count()
 
 def serialisation_to_json(filename: str, key: bytes)->None:
     '''
@@ -21,36 +22,78 @@ def serialisation_to_json(filename: str, key: bytes)->None:
     except FileNotFoundError:
         logging.error(f"{filename} not found")
 
-
-
-initial = {"hash": "f56ab81d14e7c55304dff878c3f61f2d96c8ef1f56aff163320e67df",    
-"first_digits":["477932","477932","431417","458450","475791","477714","477964","479087","419540","426101","428905","428906","458411","458443","415482"],
-"last_digits":"7819"}
-
-#initial = {"hash": "0b08d71bd3e26721ff32542069442d82811bff4a1e61134dfeedc14848cd0e39",    
-#"first_digits":["480086","480087","487415","487416","487417","489354","424917","427326","430643","424976"],
-#"last_digits":"0956"}
-def luhn(number: int)->bool:
+def luhn(init: dict)->bool:
     """
     Проверяет номер на корректность алгоритмом Луна
-
     args:
-    number(int): сгенерированные цифры карты
+        init(dict): входные данные
     return:
-    (bool): True, если все сошлось, иначе - False
+        (bool): True, если все сошлось, иначе - False
     """
-    number = str(f'{initial["first_digits"]}{number}{initial["last_digits"]}')
     res = 0
-    for i, n in enumerate(number):
-        if i % 2 == 0 and i < 15:
-            res += n if n < 10 else str(n)[0] + str(n)[1]
+    try:
+        with open(init["found_card"]) as f:
+            data = json.load(f)
+    except FileNotFoundError:
+          logging.error(f"{init['found_card']} not found")
+    print(data)
+    number = str(data["card_number"])
+    number = list(map(int, number))
+    if len(number) != 16:
+         logging.info("Номер не корректен")
+         data["luhn_check"] = "no result"
+    else:
+        last = number[15]
+        number.pop()
+        for n in number:
+            i = n * 2
+            if i > 9:
+                res += i % 10 + i // 10
+            else:
+                res += i
+
+        res = 10 - res % 10
+        print(res)
+        if res == last:
+            logging.info("Карточка корректна")
+            data["luhn_check"] = "true"
         else:
-            res += n
-    res = 0 if res % 10 == 0 else 10 - res % 10
-    return int(res) == int((initial["last_digits"])[-1])
+            logging.info("Карточка не корректна")
+            data["luhn_check"] = "false"
+    logging.info(f"Результат сохранен по пути {init['found_card']}")
+    try:
+        with open(init["found_card"], 'w') as f:
+            json.dump(data, f)
+    except FileNotFoundError:
+          logging.error(f"{init['found_card']} not found")
 
+def search(initial: dict, processes: int)->None:
+    flag = 0
+    with mp.Pool(processes) as p:
+        for b in initial["first_digits"]:
+            print(b)
 
-def checking_hash(bin: int, number: int)->int:
+            for result in p.map(partial(checking_hash, int(b), initial), range(1000000)):
+                if result:
+                    print(f'we have found {result} and have terminated pool')
+                    p.terminate()
+                    flag = 1
+                    logging.info(f'Найденная карта лежит по пути {initial["found_card"]}')
+                    data = {}
+                    data["card_number"] = f"{result}"
+                    data["luhn_check"] = "no result"
+                    try:
+                        with open(initial["found_card"], 'w') as f:
+                                json.dump(data, f)
+                    except FileNotFoundError:
+                        logging.error(f"{initial['found_card']} not found")
+                    break
+            if flag == 1:
+                break
+    if flag == 0:
+        logging.info('Карта не найдена')    
+
+def checking_hash(bin: int, initial:dict, number: int)->int:
     """
     Сравнивает хэш полученной карты с уже существующим
 
@@ -59,6 +102,25 @@ def checking_hash(bin: int, number: int)->int:
     return:
     (int): номер, если хэш совпал, иначе False
     """
-    if hashlib.sha3_224(f'{bin}{number}{initial["last_digits"]}'.encode()).hexdigest() == f'{initial["hash"]}':
-        return number
-    return number if hashlib.sha3_224(f'{bin}{number}{initial["last_digits"]}'.encode()).hexdigest() == f'{initial["hash"]}' else False
+    if hashlib.sha3_224(f'{bin}{number:06d}{initial["last_digits"]}'.encode()).hexdigest() == initial["hash"]:
+        return f'{bin}{number:06d}{initial["last_digits"]}'
+    
+def save_stat(initial: dict):
+    """
+    Сохраняет зависимость времени поиска коллизии хэша от кол-ва процессов
+    args:
+        init(dict): входные данные
+    """
+    time_ = []
+    for i in range(int(initial["processes_amount"])):
+            start = time()
+            logging.info(f'количество процессов: {i+1}\n')
+            search(initial, i+1)
+            time_.append(time()-start)
+    fig=plt.figure(figsize=(30, 17))
+    plt.ylabel('Время')
+    plt.xlabel('процессы')
+    plt.title('зависимость времени от кол-ва процессов')
+    plt.plot(list(x+1 for x in range(int(initial["processes_amount"]))),time_) 
+    plt.savefig(f'{initial["stat_path"]}')
+    logging.info(f'Зависимость времени от процессов сохранена по пути {initial["stat_path"]}\n')
