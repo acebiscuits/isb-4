@@ -36,7 +36,7 @@ def luhn(init: dict)->bool:
             data = json.load(f)
     except FileNotFoundError:
           logging.error(f"{init['found_card']} not found")
-    print(data)
+    logging.info(data)
     number = str(data["card_number"])
     number = list(map(int, number))
     if len(number) != 16:
@@ -53,7 +53,7 @@ def luhn(init: dict)->bool:
                 res += i
 
         res = 10 - res % 10
-        print(res)
+        logging.info(res)
         if res == last:
             logging.info("Карточка корректна")
             data["luhn_check"] = "true"
@@ -71,14 +71,14 @@ def search(initial: dict, processes: int)->None:
     flag = 0
     with mp.Pool(processes) as p:
         for b in initial["first_digits"]:
-            print(b)
+            logging.info(b)
 
             for result in p.map(partial(checking_hash, int(b), initial), range(1000000)):
                 if result:
-                    print(f'we have found {result} and have terminated pool')
+                    logging.info('we have found ' + result + ' and have terminated pool')
                     p.terminate()
                     flag = 1
-                    logging.info(f'Найденная карта лежит по пути {initial["found_card"]}')
+                    logging.info('Найденная карта лежит по пути ' + initial["found_card"])
                     data = {}
                     data["card_number"] = f"{result}"
                     data["luhn_check"] = "no result"
